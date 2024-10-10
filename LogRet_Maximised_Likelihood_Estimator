@@ -1,0 +1,53 @@
+import pandas as pd
+import numpy as np
+import yfinance as yf
+from scipy.optimize import minimize
+
+
+def get_data(ticker):
+    return yf.Ticker(ticker).history(period='1y')
+
+
+def logR(timeseries):
+    timeseries['log_ret'] = np.log(timeseries['Close']) - np.log(timeseries['Close'].shift(1))
+    return timeseries
+
+
+class mleGBM:
+    def __init__(self, log_returns):
+        self.log_returns = np.array(log_returns.dropna())
+
+    def neg_log_likelihood(self, params):
+        mu, sigma = params # simple mu and sigma
+        n = len(self.log_returns)
+        log_returns_adjusted = self.log_returns - (mu - 0.5 * sigma ** 2)
+        # adjustment to isolate stochastic term only to ensure optimization is focused on the stochastic term
+
+        log_likelihood = (-n / 2) * np.log(2 * np.pi) - n * np.log(sigma) - (1 / (2 * sigma ** 2)) * np.sum(
+            log_returns_adjusted ** 2) # log likelihood with ito lemma applied
+        return -log_likelihood
+
+    def optimize(self, initial_guess=(0, 1)):
+        result = minimize(self.neg_log_likelihood, initial_guess, method='L-BFGS-B',
+                          bounds=[(-np.inf, np.inf), (1e-6, np.inf)])
+        if result.success:
+            self.mu_mle, self.sigma_mle = result.x
+            return {'mu': self.mu_mle, 'sigma': self.sigma_mle}
+        else:
+            raise ValueError("MLE Optimization failed")
+
+
+# Get data and perform MLE optimization
+goog = get_data("GOOG")
+logreturns = logR(goog)['log_ret']
+
+# Calculate simple initial estimates for mu and sigma based on log returns
+mu1 = logreturns.mean()
+sigma1 = logreturns.std()
+
+# Instantiate the MLEGBM class and optimize using initial estimates
+mle = mleGBM(logreturns)
+optimized_params = mle.optimize(initial_guess=(mu1, sigma1))  # Start optimization with the simple esitmate
+
+print("Optimized mu:", optimized_params['mu'])
+print("Optimized sigma:", optimized_params['sigma'])
